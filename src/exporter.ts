@@ -185,7 +185,11 @@ export function renderToolBlock(block: { content: string; preview?: string; inpu
   return `> **${name}**\n${inputSection}${outputSection}\n`;
 }
 
-function renderMessages(messages: ConversationMessage[], format: ManagerSettings['exportToolFormat']): string {
+function renderMessages(
+  messages: ConversationMessage[],
+  format: ManagerSettings['exportToolFormat'],
+  showThinking: boolean,
+): string {
   const parts: string[] = [];
 
   for (const msg of messages) {
@@ -196,6 +200,10 @@ function renderMessages(messages: ConversationMessage[], format: ManagerSettings
     for (const block of msg.blocks) {
       if (block.type === 'text') {
         parts.push(block.content.trim() + '\n\n');
+      } else if (block.type === 'thinking') {
+        if (showThinking && block.content.trim() !== '') {
+          parts.push(`<details>\n<summary>💭 Thinking</summary>\n\n${block.content}\n\n</details>\n\n`);
+        }
       } else {
         const rendered = renderToolBlock(block, format);
         if (rendered) parts.push(rendered);
@@ -213,6 +221,7 @@ function buildRootMarkdown(
   agentLinks: Array<{ label: string; filename: string }>,
   format: ManagerSettings['exportToolFormat'],
   linkStyle: ManagerSettings['exportLinkStyle'],
+  showThinking: boolean,
 ): string {
   const titlePrompt = session.firstPrompt
     ? truncate(session.firstPrompt, 80)
@@ -241,7 +250,7 @@ function buildRootMarkdown(
   }
 
   lines.push('## Conversation\n');
-  lines.push(renderMessages(messages, format));
+  lines.push(renderMessages(messages, format, showThinking));
 
   return lines.join('\n');
 }
@@ -253,6 +262,7 @@ function buildAgentMarkdown(
   messages: ConversationMessage[],
   format: ManagerSettings['exportToolFormat'],
   linkStyle: ManagerSettings['exportLinkStyle'],
+  showThinking: boolean,
 ): string {
   const title = agent.slug ?? agent.agentId.slice(0, 8);
   const rootFilenameNoExt = rootFilename.replace(/\.md$/, '');
@@ -264,7 +274,7 @@ function buildAgentMarkdown(
   lines.push(`${backLink}\n`);
   lines.push(`# Agent: ${title}\n`);
   lines.push('## Conversation\n');
-  lines.push(renderMessages(messages, format));
+  lines.push(renderMessages(messages, format, showThinking));
 
   return lines.join('\n');
 }
@@ -277,6 +287,7 @@ export function exportConversation(
   const { projectKey, sessionId, displayName, session, readConversation } = params;
   const format = settings.exportToolFormat;
   const linkStyle = settings.exportLinkStyle ?? 'markdown';
+  const showThinking = settings.showThinking ?? false;
 
   const rootDir = path.dirname(rootPath);
   const rootBasename = path.basename(rootPath, '.md');
@@ -306,14 +317,14 @@ export function exportConversation(
     const agentFilename = `${rootBasename}-agent-${label}.md`;
     agentLinks.push({ label, filename: agentFilename });
 
-    const agentContent = buildAgentMarkdown(agent, label, path.basename(rootPath), agentMessages, format, linkStyle);
+    const agentContent = buildAgentMarkdown(agent, label, path.basename(rootPath), agentMessages, format, linkStyle, showThinking);
     const agentPath = path.join(rootDir, agentFilename);
     fs.writeFileSync(agentPath, agentContent, 'utf-8');
     agentPaths.push(agentPath);
   }
 
   // Write root file — content-aware path selection avoids duplicates
-  const rootContent = buildRootMarkdown(session, displayName, rootMessages, agentLinks, format, linkStyle);
+  const rootContent = buildRootMarkdown(session, displayName, rootMessages, agentLinks, format, linkStyle, showThinking);
   const actualRootPath = resolveRootPath(rootPath, rootContent);
   fs.writeFileSync(actualRootPath, rootContent, 'utf-8');
 

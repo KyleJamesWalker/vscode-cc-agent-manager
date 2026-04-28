@@ -15,6 +15,7 @@ const defaultSettings: ManagerSettings = {
   exportTemplate: '~/Documents/claude-exports/{slug}.md',
   exportLinkStyle: 'markdown',
   exportToolFormat: 'compact',
+  showThinking: false,
 };
 
 const baseSession: ClaudeSession = {
@@ -191,6 +192,61 @@ describe('exportConversation', () => {
     const agentContent = String(jest.mocked(fs.writeFileSync).mock.calls[0][1]);
     expect(agentContent).toContain('← [Back to session](./session.md)');
     expect(result.agentPaths).toEqual(['/tmp/session-agent-explore.md']);
+  });
+
+  test('renders non-empty thinking block as <details> when showThinking is true', () => {
+    const params: ExportParams = {
+      ...baseParams,
+      readConversation: () => [
+        {
+          role: 'assistant',
+          blocks: [{ type: 'thinking', content: 'I should consider edge cases.' }],
+          timestamp: '2024-01-01T00:00:01Z',
+        },
+      ],
+    };
+    const settings = { ...defaultSettings, showThinking: true };
+    exportConversation(params, settings, '/tmp/session.md');
+    const rootContent = String(jest.mocked(fs.writeFileSync).mock.calls[0][1]);
+    expect(rootContent).toContain('<details>');
+    expect(rootContent).toContain('<summary>💭 Thinking</summary>');
+    expect(rootContent).toContain('I should consider edge cases.');
+    expect(rootContent).toContain('</details>');
+  });
+
+  test('omits empty thinking block even when showThinking is true', () => {
+    const params: ExportParams = {
+      ...baseParams,
+      readConversation: () => [
+        {
+          role: 'assistant',
+          blocks: [{ type: 'thinking', content: '' }],
+          timestamp: '2024-01-01T00:00:01Z',
+        },
+      ],
+    };
+    const settings = { ...defaultSettings, showThinking: true };
+    exportConversation(params, settings, '/tmp/session.md');
+    const rootContent = String(jest.mocked(fs.writeFileSync).mock.calls[0][1]);
+    expect(rootContent).not.toContain('<details>');
+    expect(rootContent).not.toContain('💭 Thinking');
+  });
+
+  test('omits thinking block when showThinking is false', () => {
+    const params: ExportParams = {
+      ...baseParams,
+      readConversation: () => [
+        {
+          role: 'assistant',
+          blocks: [{ type: 'thinking', content: 'Reasoning text.' }],
+          timestamp: '2024-01-01T00:00:01Z',
+        },
+      ],
+    };
+    exportConversation(params, defaultSettings, '/tmp/session.md');
+    const rootContent = String(jest.mocked(fs.writeFileSync).mock.calls[0][1]);
+    expect(rootContent).not.toContain('<details>');
+    expect(rootContent).not.toContain('Reasoning text.');
   });
 
   test('root file links to agent sub-file', () => {

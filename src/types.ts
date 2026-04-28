@@ -1,4 +1,4 @@
-export type SessionStatus = 'active' | 'thinking' | 'waiting' | 'recent' | 'idle';
+export type SessionStatus = 'active' | 'thinking' | 'reasoning' | 'waiting' | 'recent' | 'idle';
 
 export interface SubAgent {
   agentId: string;
@@ -42,7 +42,7 @@ export interface ClaudeProject {
 }
 
 export interface MessageBlock {
-  type: 'text' | 'tool';
+  type: 'text' | 'tool' | 'thinking';
   content: string;
   /** Tool-specific fields (present when type === 'tool') */
   toolUseId?: string;
@@ -66,6 +66,7 @@ export interface ManagerSettings {
   exportTemplate: string;
   exportLinkStyle: 'markdown' | 'wiki';
   exportToolFormat: 'compact' | 'expanded' | 'omit';
+  showThinking: boolean;
 }
 
 export interface HookCheck {

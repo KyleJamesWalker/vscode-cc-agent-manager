@@ -38,7 +38,7 @@
   let filterText = '';
   let activeFilter = 'all';
   let pinnedKeys = new Set();
-  let settings = { soundEnabled: false, soundRepeatSec: 0, exportTemplate: '~/Documents/claude-exports/{slug}.md', exportLinkStyle: 'markdown', exportToolFormat: 'compact' };
+  let settings = { soundEnabled: false, soundRepeatSec: 0, exportTemplate: '~/Documents/claude-exports/{slug}.md', exportLinkStyle: 'markdown', exportToolFormat: 'compact', showThinking: false };
   let previousWaitingIds = new Set();
   let soundRepeatTimer = null;
   let audioCtx = null;
@@ -63,6 +63,8 @@
   let focusedIndex = -1;
   let layoutMode = 'wide';
   let renderedMessageCount = 0;
+  /** Most recent conversation messages, kept so the view can re-render when settings change. */
+  let currentMessages = [];
 
   // Tailing state
   /** @type {ReturnType<typeof setTimeout> | null} */
@@ -473,9 +475,24 @@
     });
   });
 
+  const showThinkingCb = document.getElementById('show-thinking');
+  if (showThinkingCb) {
+    showThinkingCb.addEventListener('change', () => {
+      settings.showThinking = showThinkingCb.checked;
+      pushSettings();
+      // Re-render sidebar (status dots may change) and conversation
+      renderSidebar(filtered());
+      if (selectedSessionId) {
+        renderedMessageCount = 0;
+        renderConversation(currentMessages);
+      }
+    });
+  }
+
   function syncSettingsUI() {
     soundEnabledCb.checked = settings.soundEnabled;
     soundRepeatSel.value = String(settings.soundRepeatSec);
+    if (showThinkingCb) showThinkingCb.checked = !!settings.showThinking;
     if (exportTemplateInput) {
       exportTemplateInput.value = settings.exportTemplate || '~/Documents/claude-exports/{slug}.md';
       resizeTemplateInput();
@@ -633,6 +650,7 @@
     if (!ts) return 'idle';
     const mins = (Date.now() - new Date(ts).getTime()) / 60000;
     if (mins < 5) {
+      if (precomputedStatus === 'reasoning') return settings.showThinking ? 'reasoning' : 'thinking';
       if (precomputedStatus === 'thinking') return 'thinking';
       if (precomputedStatus === 'waiting') return 'waiting';
       return 'active';
@@ -1141,6 +1159,7 @@
   // ── Conversation Render ────────────────────────────────────────────────────
   function renderConversation(messages, sessionId, agentId) {
     const container = document.getElementById('conversation-container');
+    currentMessages = messages || [];
 
     if (!messages || messages.length === 0) {
       container.innerHTML = '<div class="conv-empty"><p>No messages in this conversation.</p></div>';
@@ -1168,6 +1187,13 @@
       });
     });
 
+    // Thinking pill click-to-expand
+    container.querySelectorAll('.thinking-block-header').forEach((header) => {
+      header.addEventListener('click', () => {
+        header.closest('.thinking-block').classList.toggle('expanded');
+      });
+    });
+
     container.scrollTop = container.scrollHeight;
     renderedMessageCount = messages.length;
   }
@@ -1191,6 +1217,11 @@
           i++;
         }
         blocksHtml += `<div class="tool-badges">${toolBadgesHtml}</div>`;
+      } else if (block.type === 'thinking') {
+        if (settings.showThinking && block.content && block.content.trim()) {
+          blocksHtml += renderThinkingBlock(block);
+        }
+        i++;
       } else {
         blocksHtml += `<div class="msg-text">${formatText(block.content)}</div>`;
         i++;
@@ -1204,6 +1235,21 @@
     <span class="msg-time">${timeStr}</span>
   </div>
   <div class="msg-body">${blocksHtml}</div>
+</div>`;
+  }
+
+  function renderThinkingBlock(block) {
+    const text = block.content || '';
+    const previewSrc = text.replaceAll(/\s+/g, ' ').trim();
+    const preview = previewSrc.length > 60 ? previewSrc.slice(0, 60) + '…' : previewSrc;
+    return `
+<div class="thinking-block">
+  <div class="thinking-block-header">
+    <span class="thinking-icon">💭</span>
+    <span class="thinking-label">Thinking</span>
+    <span class="thinking-preview">${esc(preview)}</span>
+  </div>
+  <div class="thinking-detail">${formatText(text)}</div>
 </div>`;
   }
 
@@ -1342,6 +1388,7 @@
 
     const newMessages = messages.slice(renderedMessageCount);
     renderedMessageCount = newCount;
+    currentMessages = messages;
 
     // Insert NEW divider if user is scrolled up
     if (!isUserAtBottom && !container.querySelector('.new-msg-divider')) {
@@ -1363,6 +1410,11 @@
         msgEl.querySelectorAll('.tool-badge-header').forEach((header) => {
           header.addEventListener('click', () => {
             header.closest('.tool-badge').classList.toggle('expanded');
+          });
+        });
+        msgEl.querySelectorAll('.thinking-block-header').forEach((header) => {
+          header.addEventListener('click', () => {
+            header.closest('.thinking-block').classList.toggle('expanded');
           });
         });
         setTimeout(() => { msgEl.classList.add('msg-new-faded'); }, 2000);

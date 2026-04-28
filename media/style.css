@@ -672,6 +672,12 @@ button {
   animation: pulse-thinking 1.4s ease-in-out infinite;
 }
 
+.status-dot.reasoning {
+  background: #c084fc;
+  box-shadow: 0 0 0 2px rgba(192, 132, 252, 0.2);
+  animation: pulse-thinking 1.4s ease-in-out infinite;
+}
+
 @keyframes pulse-thinking {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.5; transform: scale(0.75); }
@@ -977,6 +983,84 @@ button {
   line-height: 1.6;
   color: var(--vscode-foreground);
   padding-left: 2px;
+}
+
+/* ── Thinking Block ────────────────────────────────────────────────────────── */
+.thinking-block {
+  display: block;
+  margin: 4px 0;
+  border-left: 2px solid #c084fc;
+  border-radius: 4px;
+  background: rgba(192, 132, 252, 0.06);
+  cursor: pointer;
+  transition: background 0.15s;
+  font-style: italic;
+}
+
+.thinking-block:hover {
+  background: rgba(192, 132, 252, 0.12);
+}
+
+.thinking-block-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  user-select: none;
+}
+
+.thinking-icon {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.thinking-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #c084fc;
+  font-style: normal;
+}
+
+.thinking-preview {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.thinking-block.expanded .thinking-preview {
+  display: none;
+}
+
+.thinking-detail {
+  display: none;
+  padding: 4px 14px 10px 14px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.5;
+}
+
+.thinking-block.expanded .thinking-detail {
+  display: block;
+}
+
+/* ── Sidebar header: Show thinking toggle ─────────────────────────────────── */
+.show-thinking-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  user-select: none;
+}
+
+.show-thinking-toggle input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
 }
 
 /* ── Tool Badge (collapsed) ───────────────────────────────────────────────── */

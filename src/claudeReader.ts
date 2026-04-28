@@ -9,6 +9,7 @@ const MAX_SESSION_AGE_DAYS = 30;
 interface ContentItem {
   type: string;
   text?: string;
+  thinking?: string;
   name?: string;
   id?: string;
   input?: Record<string, unknown>;
@@ -79,6 +80,7 @@ function deriveStatus(
   if (!lastMessageRole) return 'idle';
   if (lastMessageRole === 'user') return 'active';
   // lastMessageRole === 'assistant'
+  if (lastContentBlockType === 'thinking') return 'reasoning';
   if (lastContentBlockType === 'tool_use') return 'thinking';
   // text block ending with a question mark → genuinely waiting for user input
   if (lastContentBlockType === 'text' && lastContentBlockText && QUESTION_MARK_RE.test(lastContentBlockText)) {
@@ -588,6 +590,8 @@ function extractBlocks(
       blocks.push({ type: 'text', content: item.text });
     } else if (item.type === 'tool_use' && item.name) {
       blocks.push(buildToolBlock(item, toolResults));
+    } else if (item.type === 'thinking') {
+      blocks.push({ type: 'thinking', content: item.thinking ?? '' });
     }
   }
   return blocks;

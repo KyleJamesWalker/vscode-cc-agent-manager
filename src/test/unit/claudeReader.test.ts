@@ -164,6 +164,39 @@ describe('readConversation', () => {
     expect(result).toHaveLength(2);
   });
 
+  test('parses thinking block with non-empty text', () => {
+    jest.mocked(fs.readFileSync).mockReturnValue(
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'thinking', thinking: 'reasoning here', signature: 'EpAB...' }] },
+      })
+    );
+    const result = readConversation('proj', 'sess');
+    expect(result[0].blocks).toEqual([{ type: 'thinking', content: 'reasoning here' }]);
+  });
+
+  test('parses thinking block with empty text as empty content', () => {
+    jest.mocked(fs.readFileSync).mockReturnValue(
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'thinking', thinking: '', signature: 'EpAB...' }] },
+      })
+    );
+    const result = readConversation('proj', 'sess');
+    expect(result[0].blocks).toEqual([{ type: 'thinking', content: '' }]);
+  });
+
+  test('parses thinking block with missing thinking field as empty content', () => {
+    jest.mocked(fs.readFileSync).mockReturnValue(
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'thinking', signature: 'EpAB...' }] },
+      })
+    );
+    const result = readConversation('proj', 'sess');
+    expect(result[0].blocks).toEqual([{ type: 'thinking', content: '' }]);
+  });
+
   test('uses agentId path when provided', () => {
     jest.mocked(fs.readFileSync).mockReturnValue('');
     readConversation('proj', 'sess', 'agent123');
@@ -355,6 +388,20 @@ describe('userChars, assistantLines, codeLines (via readClaudeProjects)', () => 
     expect(projects[0].sessions[0].codeLines).toBe(5); // Write: 3, Edit: 2, Bash: ignored
   });
 
+  test('thinking blocks do not contribute to assistantLines or codeLines', () => {
+    const lines = [
+      JSON.stringify({ type: 'user', timestamp: recentTs(), cwd: '/work', message: { content: 'hello world' } }),
+      JSON.stringify({
+        type: 'assistant', timestamp: recentTs(),
+        message: { content: [{ type: 'thinking', thinking: 'a\nb\nc\nd' }] },
+      }),
+    ].join('\n');
+    setupSingleProject(lines);
+    const projects = readClaudeProjects();
+    expect(projects[0].sessions[0].assistantLines).toBe(0);
+    expect(projects[0].sessions[0].codeLines).toBe(0);
+  });
+
   test('assistantLines and codeLines default to 0 with no assistant messages', () => {
     const lines = [
       JSON.stringify({ type: 'user', timestamp: recentTs(), cwd: '/work', message: { content: 'hello world' } }),
@@ -426,6 +473,32 @@ describe('deriveStatus (via readClaudeProjects)', () => {
     setupSingleProject(lines);
     const projects = readClaudeProjects();
     expect(projects[0].sessions[0].status).toBe('waiting');
+  });
+
+  test('reasoning when last assistant message ends with a non-empty thinking block', () => {
+    const lines = [
+      JSON.stringify({ type: 'user', timestamp: recentTs(), cwd: '/work', message: { content: 'hello world' } }),
+      JSON.stringify({
+        type: 'assistant', timestamp: recentTs(),
+        message: { content: [{ type: 'thinking', thinking: 'pondering' }] },
+      }),
+    ].join('\n');
+    setupSingleProject(lines);
+    const projects = readClaudeProjects();
+    expect(projects[0].sessions[0].status).toBe('reasoning');
+  });
+
+  test('reasoning when last assistant message ends with an empty (redacted) thinking block', () => {
+    const lines = [
+      JSON.stringify({ type: 'user', timestamp: recentTs(), cwd: '/work', message: { content: 'hello world' } }),
+      JSON.stringify({
+        type: 'assistant', timestamp: recentTs(),
+        message: { content: [{ type: 'thinking', thinking: '', signature: 'Ep...' }] },
+      }),
+    ].join('\n');
+    setupSingleProject(lines);
+    const projects = readClaudeProjects();
+    expect(projects[0].sessions[0].status).toBe('reasoning');
   });
 
   test('waiting when last assistant message ends with Arabic question mark \u061f', () => {

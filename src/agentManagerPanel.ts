@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS: ManagerSettings = {
   exportTemplate: '~/Documents/claude-exports/{slug}.md',
   exportLinkStyle: 'markdown',
   exportToolFormat: 'compact',
+  showThinking: false,
 };
 
 export class AgentManagerPanel {
@@ -476,6 +477,10 @@ export class AgentManagerPanel {
       <div class="sidebar-header">
         <span class="sidebar-title" title="Keyboard: j/k to navigate, ? for help">Agent Manager</span>
         <div class="sidebar-actions">
+          <label class="show-thinking-toggle" title="Show Claude's reasoning steps when available. Most thinking is redacted by Anthropic and won't display even when enabled.">
+            <input type="checkbox" id="show-thinking" />
+            <span>Thinking</span>
+          </label>
           <span class="last-updated" id="last-updated"></span>
           <button class="icon-btn" id="refresh-btn" title="Refresh">
             <svg viewBox="0 0 16 16" fill="currentColor"><path d="M13.5 2.5a.5.5 0 0 1 .5.5v3a.5.5 0 0 1-.5.5h-3a.5.5 0 0 1 0-1h1.79A5.5 5.5 0 1 0 13.5 8a.5.5 0 0 1 1 0 6.5 6.5 0 1 1-2.035-4.715L13.5 2.5z"/></svg>
