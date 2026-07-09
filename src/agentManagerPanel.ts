@@ -7,6 +7,7 @@ import { ManagerSettings, ClaudeProject, ClaudeSession } from './types';
 import { exportConversation, expandTemplate } from './exporter';
 import { TerminalManager } from './terminalManager';
 import { getHooksHealth } from './hookHealth';
+import { CLAUDE_CODE_OPEN_COMMAND, buildForkResumePrompt, isSessionId } from './claudeCodeLauncher';
 
 const DEFAULT_SETTINGS: ManagerSettings = {
   soundEnabled: false,
@@ -187,6 +188,11 @@ export class AgentManagerPanel {
               }
             })();
             break;
+          case 'openInClaudeCode':
+            if (message.sessionId) {
+              void this._openInClaudeCode(message.sessionId);
+            }
+            break;
           case 'getHooksHealth':
             void (async () => {
               try {
@@ -228,6 +234,48 @@ export class AgentManagerPanel {
       vscode.Uri.file(folderPath),
       { forceNewWindow: !isCurrentWindow }
     );
+  }
+
+  /**
+   * Fork-resume a session in the native Claude Code panel
+   * (see docs/superpowers/specs/2026-06-14-fork-resume-in-panel-design.md).
+   *
+   * We open a fresh panel pre-filled with a prompt telling Claude to find the prior transcript and
+   * continue. We still pass the session id first so the panel genuinely resumes when its cwd matches.
+   * CC does not auto-send the pre-filled prompt, hence the press-Enter toast. Falls back to copying
+   * `claude -r <id>`.
+   */
+  private async _openInClaudeCode(sessionId: string): Promise<void> {
+    if (!isSessionId(sessionId)) {
+      void vscode.window.showErrorMessage(`Not a valid session id: "${sessionId}"`);
+      return;
+    }
+
+    const fallbackCmd = `claude -r ${sessionId}`;
+    const commands = await vscode.commands.getCommands(true);
+
+    if (!commands.includes(CLAUDE_CODE_OPEN_COMMAND)) {
+      await vscode.env.clipboard.writeText(fallbackCmd);
+      void vscode.window.showWarningMessage(
+        `Claude Code extension not found. Copied "${fallbackCmd}" to the clipboard instead.`
+      );
+      return;
+    }
+
+    try {
+      const prompt = buildForkResumePrompt(sessionId);
+      await vscode.commands.executeCommand(CLAUDE_CODE_OPEN_COMMAND, sessionId, prompt);
+      void vscode.window.showInformationMessage(
+        'Opened in Claude Code — press Enter to continue this session.'
+      );
+    } catch (e: unknown) {
+      await vscode.env.clipboard.writeText(fallbackCmd);
+      void vscode.window.showErrorMessage(
+        `Could not open the session in Claude Code: ${
+          e instanceof Error ? e.message : String(e)
+        }. Copied "${fallbackCmd}" to the clipboard instead.`
+      );
+    }
   }
 
   private _getPinnedKeys(): string[] {

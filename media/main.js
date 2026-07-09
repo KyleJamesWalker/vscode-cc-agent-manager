@@ -912,8 +912,10 @@
     el.id = 'hash-dropdown';
     el.style.display = 'none';
     el.innerHTML =
+      '<div class="hash-dropdown-item" data-action="open">Resume/Fork session</div>' +
+      '<div class="hash-dropdown-sep"></div>' +
       '<div class="hash-dropdown-item" data-action="id">Copy ID</div>' +
-      '<div class="hash-dropdown-item" data-action="cmd">Copy claude -c \u2026</div>' +
+      '<div class="hash-dropdown-item" data-action="cmd">Copy claude -r \u2026</div>' +
       '<div class="hash-dropdown-item" data-action="fork">Copy claude -r \u2026 --fork-session</div>';
     document.body.appendChild(el);
     el.addEventListener('click', function (ev) {
@@ -922,7 +924,12 @@
       if (!item) return;
       const id = el.dataset.currentId || '';
       const action = item.dataset.action;
-      const text = action === 'cmd' ? `claude -c ${id}` : action === 'fork' ? `claude -r ${id} --fork-session` : id;
+      if (action === 'open') {
+        closeHashDropdown();
+        vscode.postMessage({ command: 'openInClaudeCode', sessionId: id });
+        return;
+      }
+      const text = action === 'cmd' ? `claude -r ${id}` : action === 'fork' ? `claude -r ${id} --fork-session` : id;
       const activeBtn = _dropdownActiveBtn;
       closeHashDropdown();
       navigator.clipboard.writeText(text).then(() => {
@@ -941,7 +948,7 @@
     dropdown.dataset.currentId = btn.dataset.id || '';
     const short = (btn.dataset.id || '').slice(0, 8);
     const cmdItem = dropdown.querySelector('[data-action="cmd"]');
-    if (cmdItem) cmdItem.textContent = `Copy claude -c ${short}\u2026`;
+    if (cmdItem) cmdItem.textContent = `Copy claude -r ${short}\u2026`;
     const forkItem = dropdown.querySelector('[data-action="fork"]');
     if (forkItem) forkItem.textContent = `Copy claude -r ${short}\u2026 --fork-session`;
     const rect = btn.getBoundingClientRect();

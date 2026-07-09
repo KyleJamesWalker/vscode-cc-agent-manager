@@ -768,6 +768,11 @@ button {
   background: var(--vscode-menu-selectionBackground);
   color: var(--vscode-menu-selectionForeground);
 }
+.hash-dropdown-sep {
+  height: 1px;
+  background: var(--vscode-menu-separatorBackground, var(--vscode-menu-border));
+  margin: 4px 0;
+}
 
 /* ── LIVE Indicator ──────────────────────────────────────────────────────── */
 .live-indicator {
