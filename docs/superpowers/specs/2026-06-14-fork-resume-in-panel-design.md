@@ -46,36 +46,44 @@ Pass both arguments to `editor.open`:
 
 A non-modal info toast tells the user to press Enter, since CC does not auto-send.
 
-### Injected prompt (draft)
+### Injected prompt (final)
 
-> This is a continuation of an earlier Claude Code session (id `<SESSION_ID>`). If that
-> conversation is not already loaded in this tab, first locate and read its transcript — the
-> `<SESSION_ID>.jsonl` file under your `~/.claude/projects` directory (JSONL: one message/tool
-> record per line) — briefly summarize where we left off, then continue from there. Treat it as our
-> prior conversation and pick up the work.
+> You are a continuation of an earlier Claude Code session, id `<SESSION_ID>`. Determine whether
+> that session has already been resumed here, or whether this is a new session (if this is the only
+> prompt in the current session, it's a new session). For a new session, restore the earlier
+> session's context by locating and reading its transcript — the `<SESSION_ID>.jsonl` file under
+> your `~/.claude/projects` directory (JSONL: one message/tool record per line; read at least the
+> last ~15 text/tool events). Identify from it the last in-flight work, verify on disk the state of
+> the files it touched (a final Write may not have persisted), and summarize (in the language of
+> the previous conversation) exactly where we ended and what's unfinished. Then we'll continue.
 
-The wording is a near no-op when the session genuinely resumes ("if that conversation is not
-already loaded").
+The wording is a near no-op when the session genuinely resumes ("determine whether that session
+has already been resumed here").
 
 ## Implementation Scope
 
-- **`src/claudeCodeLauncher.ts`** — add a pure `buildForkResumePrompt(sessionId: string): string`.
-  No transcript-path resolution.
-- **`src/test/unit/claudeCodeLauncher.test.ts`** — new failing-first tests for the prompt builder.
-- **`src/agentManagerPanel.ts`** — `_openInClaudeCode` passes `(sessionId, prompt)` to
-  `CLAUDE_CODE_OPEN_COMMAND` and shows the press-Enter info toast. The `no-extension` clipboard
-  fallback and the `catch` clipboard fallback stay. The `wrong-project` cwd check is no longer
-  needed for this path (only the session id matters); `_findSessionCwd` may stay for other callers.
-- **`media/main.js`** — relabel the dropdown action so it reads as a fork-resume.
+- **`src/claudeCodeLauncher.ts`** — new module with pure helpers: `CLAUDE_CODE_OPEN_COMMAND`,
+  `buildForkResumePrompt(sessionId: string): string` (no transcript-path resolution), and an
+  `isSessionId(value: string): boolean` UUID guard.
+- **`src/test/unit/claudeCodeLauncher.test.ts`** — new failing-first tests for the prompt builder
+  and the session-id guard.
+- **`src/agentManagerPanel.ts`** — new `openInClaudeCode` webview message handled by
+  `_openInClaudeCode`, which validates the id with `isSessionId`, passes `(sessionId, prompt)` to
+  `CLAUDE_CODE_OPEN_COMMAND`, and shows the press-Enter info toast. When the CC extension command
+  is missing or `executeCommand` throws, `claude -r <id>` is copied to the clipboard instead.
+- **`media/main.js`** — add the "Resume/Fork session" dropdown action; fix the copy items to use
+  `claude -r` (`claude -c` does not take a session id).
+- **`docs/webview-ui.md`** — document the new `openInClaudeCode` message.
 
 ## Acceptance Criteria
 
-- [ ] Clicking the action opens a CC editor panel whose chat input is pre-filled with a prompt
+- [x] Clicking the action opens a CC editor panel whose chat input is pre-filled with a prompt
       that contains the session id and instructs Claude to locate/read the prior session transcript.
-- [ ] A non-modal info toast tells the user to press Enter to continue (CC does not auto-send).
-- [ ] If the CC extension command is unavailable, `claude -r <id>` is copied to the clipboard with
+- [x] A non-modal info toast tells the user to press Enter to continue (CC does not auto-send).
+- [x] If the CC extension command is unavailable, `claude -r <id>` is copied to the clipboard with
       a non-modal warning.
-- [ ] `buildForkResumePrompt(sessionId)` is a pure function: returns a string containing the
+- [x] `buildForkResumePrompt(sessionId)` is a pure function: returns a string containing the
       session id, instructs locating/reading the prior session transcript, and is safe-to-continue
-      ("if not already loaded") when the session genuinely resumes.
-- [ ] The prompt does **not** embed a resolved filesystem path — only the session id.
+      (near no-op wording) when the session genuinely resumes.
+- [x] The prompt does **not** embed a resolved filesystem path — only the session id.
+- [x] A session id that is not a UUID is rejected before any command or clipboard use.

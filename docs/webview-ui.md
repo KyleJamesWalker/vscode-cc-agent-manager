@@ -26,7 +26,14 @@ Webview → Extension:
 { "command": "updateSettings", "settings": { "soundEnabled": bool, "soundRepeatSec": number, "exportDestination": "dialog"|"default"|"cwd", "exportToolFormat": "compact"|"expanded"|"omit" } }
 { "command": "loadConversation", "projectKey": "...", "sessionId": "...", "agentId": "..." }
 { "command": "exportChat", "projectKey": "...", "sessionId": "..." }
+{ "command": "openInClaudeCode", "sessionId": "..." }
 ```
+
+`openInClaudeCode` (hash dropdown → "Resume/Fork session") asks the extension to fork-resume the
+session in the native Claude Code panel via `claude-vscode.editor.open`, pre-filling a prompt that
+tells Claude to read the prior transcript and continue (see
+[the fork-resume spec](superpowers/specs/2026-06-14-fork-resume-in-panel-design.md)). Falls back to
+copying `claude -r <id>` when the Claude Code extension is unavailable.
 
 ## Layout
 
