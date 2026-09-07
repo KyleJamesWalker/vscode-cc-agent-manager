@@ -143,6 +143,8 @@
     if (msg.command === 'update') {
       allProjects = msg.projects ?? [];
       if (msg.pinnedKeys) pinnedKeys = new Set(msg.pinnedKeys);
+      if (msg.savedSearches) { savedSearches = msg.savedSearches; renderSavedSearchChips(); }
+      if (msg.sessionMeta) sessionMeta = msg.sessionMeta;
       // Skip settings sync while the panel is open to avoid resetting the user's
       // in-progress edits (cursor position, typed text) during auto-refresh.
       if (msg.settings && !settingsPanel.classList.contains('open')) {
@@ -157,6 +159,7 @@
         new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
     if (msg.command === 'conversation') {
+      pendingScrollUuid = msg.scrollToUuid ?? null;
       currentSessionCwd = msg.cwd ?? null;
       hasLiveTerminal = false;
       const focusBtn = document.getElementById('focus-btn');
@@ -198,6 +201,53 @@
         if (submitBtn) { submitBtn.textContent = 'Send'; submitBtn.disabled = false; }
         if (errorEl) { errorEl.textContent = msg.error || 'Send failed'; errorEl.classList.add('visible'); }
       }
+    }
+    if (msg.command === 'searchProgress') {
+      if (msg.requestId === searchState.requestId) {
+        searchState.hits = searchState.hits.concat(msg.hits || []);
+        searchState.filesScanned = msg.filesScanned || 0;
+        searchState.filesTotal = msg.filesTotal || 0;
+        if (activeTab === 'search') { renderSearchResults(); renderSearchStatus(); }
+      }
+    }
+    if (msg.command === 'searchDone') {
+      if (msg.requestId === searchState.requestId) {
+        searchState.running = false;
+        searchState.durationMs = msg.durationMs || 0;
+        searchState.filesScanned = msg.filesScanned || searchState.filesScanned;
+        searchState.titles = msg.titles || {};
+        searchState.error = msg.error || '';
+        if (activeTab === 'search') { renderSearchResults(); renderSearchStatus(); }
+      }
+    }
+    if (msg.command === 'startFileUsage') {
+      activeTab = 'search';
+      const tabBar = document.getElementById('tab-bar');
+      if (tabBar) tabBar.querySelectorAll('.tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === 'search'));
+      fileUsageState = { path: msg.path, sessions: [], error: '' };
+      fileUsageHeuristic = false;
+      searchState.running = true;
+      showSearch();
+    }
+    if (msg.command === 'fileUsage') {
+      fileUsageState = { path: msg.path, sessions: msg.sessions || [], error: msg.error || '' };
+      searchState.running = false;
+      if (activeTab === 'search') { renderSearchResults(); renderSearchStatus(); }
+    }
+    if (msg.command === 'savedSearches') {
+      savedSearches = msg.items || [];
+      renderSavedSearchChips();
+      if (activeTab === 'search') renderSearchResults();
+    }
+    if (msg.command === 'sessionMeta') {
+      sessionMeta = msg.items || {};
+      renderNotesPanel();
+      renderSidebar(filtered());
+    }
+    if (msg.command === 'timeline') {
+      timelineDays = msg.days || [];
+      timelineError = msg.error || '';
+      if (activeTab === 'timeline') renderTimelineView();
     }
     if (msg.command === 'hooksHealth') {
       currentHealthReport = msg.payload;
@@ -982,6 +1032,8 @@
     exportBtn.disabled = exportInProgress;
     const sendBtn = document.getElementById('send-btn');
     if (sendBtn) sendBtn.style.display = 'inline-block';
+    const notesBtn = document.getElementById('notes-btn');
+    if (notesBtn) notesBtn.style.display = 'inline-block';
     const focusBtn2 = document.getElementById('focus-btn');
     if (focusBtn2) focusBtn2.style.display = 'none'; // hidden until terminalStatus arrives
     closeSendBar();
@@ -1123,6 +1175,7 @@
     ${session.gitBranch ? `<span class="tree-branch">${esc(session.gitBranch)}</span>` : ''}
     ${session.messageCount ? `<span class="tree-msgs">${session.messageCount} msgs</span>` : ''}
     ${hasAgents ? `<span class="tree-agents">${session.subAgents.length} agent${session.subAgents.length === 1 ? '' : 's'}</span>` : ''}
+    ${(sessionMeta[session.sessionId]?.tags || []).map((t) => `<span class="search-tag">${esc(t)}</span>`).join('')}
   </div>
   ${hasAgents ? `<div class="tree-subagents">
     ${session.subAgents.map((a) => renderSubAgent(a, projectKey, session.sessionId)).join('')}
@@ -1175,7 +1228,9 @@
       });
     });
 
-    container.scrollTop = container.scrollHeight;
+    if (!scrollToPendingUuid(container)) {
+      container.scrollTop = container.scrollHeight;
+    }
     renderedMessageCount = messages.length;
   }
 
@@ -1205,7 +1260,7 @@
     }
 
     return `
-<div class="msg ${isUser ? 'msg-user' : 'msg-assistant'}">
+<div class="msg ${isUser ? 'msg-user' : 'msg-assistant'}"${msg.uuid ? ` data-uuid="${esc(msg.uuid)}"` : ''}>
   <div class="msg-header">
     <span class="msg-role">${roleLabel}</span>
     <span class="msg-time">${timeStr}</span>
@@ -1560,8 +1615,10 @@
       case '1':
       case '2':
       case '3':
-      case '4': {
-        const tabs = ['sessions', 'stats', 'health', 'about'];
+      case '4':
+      case '5':
+      case '6': {
+        const tabs = ['sessions', 'stats', 'health', 'about', 'search', 'timeline'];
         const idx = Number(e.key) - 1;
         const tab = tabs[idx];
         if (tab && tab !== activeTab) {
@@ -1571,6 +1628,8 @@
           if (tab === 'stats') showStats();
           else if (tab === 'health') showHealth();
           else if (tab === 'about') showAbout();
+          else if (tab === 'search') showSearch();
+          else if (tab === 'timeline') showTimeline();
           else hideStats();
         }
         e.preventDefault();
@@ -1613,7 +1672,10 @@
         <div class="help-key">Tab</div><div class="help-desc">Switch sidebar / conversation</div>
         <div class="help-key">1</div><div class="help-desc">Agents tab</div>
         <div class="help-key">2</div><div class="help-desc">Stats tab</div>
-        <div class="help-key">3</div><div class="help-desc">About tab</div>
+        <div class="help-key">3</div><div class="help-desc">Health tab</div>
+        <div class="help-key">4</div><div class="help-desc">About tab</div>
+        <div class="help-key">5</div><div class="help-desc">Search tab</div>
+        <div class="help-key">6</div><div class="help-desc">Timeline tab</div>
       </div>
       <div class="help-dismiss">Press Escape to close</div>
     </div>`;
@@ -1671,6 +1733,10 @@
         showHealth();
       } else if (tab === 'about') {
         showAbout();
+      } else if (tab === 'search') {
+        showSearch();
+      } else if (tab === 'timeline') {
+        showTimeline();
       } else {
         hideStats();
       }
@@ -2200,4 +2266,539 @@
       return esc(text).replaceAll('\n', '<br>');
     }
   }
+
+  // ── Search / Timeline / Notes ──────────────────────────────────────────────
+  let savedSearches = [];
+  let sessionMeta = {};
+  let fileUsageState = null;
+  let fileUsageHeuristic = false;
+  let timelineDays = null;
+  let timelineError = '';
+  let pendingScrollUuid = null;
+  let searchDebounce = null;
+  const searchState = {
+    text: '', isRegex: false, caseSensitive: false,
+    scopes: ['prompts', 'assistant', 'note'],
+    projectKey: '', branch: '', after: '', before: '', tag: '',
+    hits: [], titles: {}, requestId: 0, running: false,
+    filesScanned: 0, filesTotal: 0, durationMs: 0, error: '',
+  };
+  const SCOPE_LABELS = {
+    prompts: 'Prompts', assistant: 'Assistant', thinking: 'Thinking',
+    toolInput: 'Tool input', toolOutput: 'Tool output', note: 'Notes',
+  };
+
+  /** Scrolls to the message a search hit points at. Returns false if there is none. */
+  function scrollToPendingUuid(container) {
+    if (!pendingScrollUuid) return false;
+    const target = container.querySelector(`.msg[data-uuid="${CSS.escape(pendingScrollUuid)}"]`);
+    pendingScrollUuid = null;
+    if (!target) return false;
+    target.scrollIntoView({ block: 'center' });
+    target.classList.add('msg-flash');
+    setTimeout(() => target.classList.remove('msg-flash'), 1600);
+    return true;
+  }
+
+  function metaKey(sessionId, agentId) {
+    return agentId ? `${sessionId}:${agentId}` : sessionId;
+  }
+
+  function allTags() {
+    const tags = new Set();
+    for (const entry of Object.values(sessionMeta)) {
+      for (const tag of entry.tags || []) tags.add(tag);
+    }
+    return Array.from(tags).sort();
+  }
+
+  function allBranches() {
+    const branches = new Set();
+    for (const project of allProjects) {
+      for (const session of project.sessions || []) {
+        if (session.gitBranch) branches.add(session.gitBranch);
+      }
+    }
+    return Array.from(branches).sort();
+  }
+
+  function hideOtherPanels() {
+    const convHeader = document.getElementById('conversation-header');
+    const sendBar = document.getElementById('send-bar');
+    if (convHeader) convHeader.style.display = 'none';
+    if (sendBar) sendBar.style.display = 'none';
+  }
+
+  function showSearch() {
+    hideOtherPanels();
+    const container = document.getElementById('conversation-container');
+    if (!container) return;
+    container.innerHTML = renderSearchShell();
+    container.style.display = '';
+    bindSearchShellEvents(container);
+    renderSearchResults();
+    renderSearchStatus();
+    const input = document.getElementById('search-query');
+    if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+  }
+
+  function renderSearchShell() {
+    const scopeChips = Object.keys(SCOPE_LABELS).map((scope) => {
+      const on = searchState.scopes.includes(scope);
+      return `<button class="search-chip${on ? ' selected' : ''}" data-scope="${scope}">${SCOPE_LABELS[scope]}</button>`;
+    }).join('');
+
+    const projectOptions = ['<option value="">All projects</option>'].concat(
+      allProjects.map((p) => `<option value="${esc(p.key)}"${p.key === searchState.projectKey ? ' selected' : ''}>${esc(p.displayName)}</option>`)
+    ).join('');
+
+    const branchOptions = ['<option value="">Any branch</option>'].concat(
+      allBranches().map((b) => `<option value="${esc(b)}"${b === searchState.branch ? ' selected' : ''}>${esc(b)}</option>`)
+    ).join('');
+
+    const tagOptions = ['<option value="">Any tag</option>'].concat(
+      allTags().map((t) => `<option value="${esc(t)}"${t === searchState.tag ? ' selected' : ''}>${esc(t)}</option>`)
+    ).join('');
+
+    return `
+    <div class="search-view">
+      <div class="search-query-row">
+        <input type="text" id="search-query" class="search-query" placeholder="Search all sessions…" value="${esc(searchState.text)}">
+        <button class="search-toggle${searchState.caseSensitive ? ' selected' : ''}" id="search-case" title="Match case">Aa</button>
+        <button class="search-toggle${searchState.isRegex ? ' selected' : ''}" id="search-regex" title="Use regular expression">.*</button>
+        <button class="search-toggle" id="search-stop" title="Stop the running search">Stop</button>
+      </div>
+      <div class="search-scope-row">${scopeChips}</div>
+      <div class="search-filter-row">
+        <select id="search-project" class="search-select">${projectOptions}</select>
+        <select id="search-branch" class="search-select">${branchOptions}</select>
+        <select id="search-tag" class="search-select">${tagOptions}</select>
+        <input type="date" id="search-after" class="search-date" value="${esc(searchState.after)}" title="On or after">
+        <input type="date" id="search-before" class="search-date" value="${esc(searchState.before)}" title="On or before">
+        <button class="search-toggle" id="search-save" title="Save this search">Save</button>
+      </div>
+      <div class="search-status" id="search-status"></div>
+      <div class="search-results" id="search-results"></div>
+    </div>`;
+  }
+
+  function bindSearchShellEvents(container) {
+    const input = container.querySelector('#search-query');
+    if (input) {
+      input.addEventListener('input', (e) => {
+        searchState.text = e.target.value;
+        scheduleSearch();
+      });
+    }
+
+    container.querySelectorAll('.search-chip').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        const scope = chip.dataset.scope;
+        const idx = searchState.scopes.indexOf(scope);
+        if (idx === -1) searchState.scopes.push(scope);
+        else searchState.scopes.splice(idx, 1);
+        chip.classList.toggle('selected', searchState.scopes.includes(scope));
+        runSearchNow();
+      });
+    });
+
+    const bindToggle = (id, key) => {
+      const btn = container.querySelector(id);
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        searchState[key] = !searchState[key];
+        btn.classList.toggle('selected', searchState[key]);
+        runSearchNow();
+      });
+    };
+    bindToggle('#search-case', 'caseSensitive');
+    bindToggle('#search-regex', 'isRegex');
+
+    const bindFilter = (id, key) => {
+      const el = container.querySelector(id);
+      if (!el) return;
+      el.addEventListener('change', (e) => {
+        searchState[key] = e.target.value;
+        runSearchNow();
+      });
+    };
+    bindFilter('#search-project', 'projectKey');
+    bindFilter('#search-branch', 'branch');
+    bindFilter('#search-tag', 'tag');
+    bindFilter('#search-after', 'after');
+    bindFilter('#search-before', 'before');
+
+    const stopBtn = container.querySelector('#search-stop');
+    if (stopBtn) {
+      stopBtn.addEventListener('click', () => {
+        vscode.postMessage({ command: 'cancelSearch', requestId: searchState.requestId });
+        searchState.running = false;
+        renderSearchStatus();
+      });
+    }
+
+    const saveBtn = container.querySelector('#search-save');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', () => {
+        if (!searchState.text.trim()) return;
+        vscode.postMessage({
+          command: 'saveSearch',
+          name: trunc(searchState.text, 30),
+          query: buildQuery(),
+        });
+      });
+    }
+  }
+
+  function buildQuery() {
+    const query = {
+      text: searchState.text,
+      isRegex: searchState.isRegex,
+      caseSensitive: searchState.caseSensitive,
+      scopes: searchState.scopes.slice(),
+    };
+    if (searchState.projectKey) query.projectKeys = [searchState.projectKey];
+    if (searchState.branch) query.branches = [searchState.branch];
+    if (searchState.tag) query.tags = [searchState.tag];
+    if (searchState.after) query.after = new Date(searchState.after + 'T00:00:00').toISOString();
+    if (searchState.before) query.before = new Date(searchState.before + 'T23:59:59').toISOString();
+    return query;
+  }
+
+  function scheduleSearch() {
+    if (searchDebounce) clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(runSearchNow, 200);
+  }
+
+  function runSearchNow() {
+    if (searchDebounce) { clearTimeout(searchDebounce); searchDebounce = null; }
+    fileUsageState = null;
+
+    if (!searchState.text.trim() || searchState.scopes.length === 0) {
+      searchState.hits = [];
+      searchState.running = false;
+      searchState.error = '';
+      renderSearchResults();
+      renderSearchStatus();
+      return;
+    }
+
+    searchState.requestId++;
+    searchState.hits = [];
+    searchState.running = true;
+    searchState.error = '';
+    searchState.filesScanned = 0;
+    searchState.filesTotal = 0;
+    vscode.postMessage({ command: 'search', query: buildQuery(), requestId: searchState.requestId });
+    renderSearchResults();
+    renderSearchStatus();
+  }
+
+  function renderSearchStatus() {
+    const el = document.getElementById('search-status');
+    if (!el) return;
+
+    if (searchState.error) {
+      el.innerHTML = `<span class="search-error">${esc(searchState.error)}</span>`;
+      return;
+    }
+    if (fileUsageState) {
+      el.textContent = `${fileUsageState.sessions.length} session(s) touched ${fileUsageState.path}`;
+      return;
+    }
+    if (!searchState.text.trim()) {
+      el.textContent = 'Type to search every session on disk.';
+      return;
+    }
+
+    const parts = [`${searchState.hits.length} result${searchState.hits.length === 1 ? '' : 's'}`];
+    if (searchState.filesTotal) parts.push(`scanned ${searchState.filesScanned}/${searchState.filesTotal} files`);
+    if (searchState.running) parts.push('searching…');
+    else if (searchState.durationMs) parts.push(`${searchState.durationMs} ms`);
+    el.textContent = parts.join(' · ');
+  }
+
+  /**
+   * Escapes first, then wraps the match, so a snippet containing markup can
+   * never inject HTML.
+   */
+  function highlightSnippet(snippet, start, length) {
+    if (typeof start !== 'number' || start < 0 || !length) return esc(snippet);
+    return esc(snippet.slice(0, start))
+      + '<mark>' + esc(snippet.slice(start, start + length)) + '</mark>'
+      + esc(snippet.slice(start + length));
+  }
+
+  function renderSearchResults() {
+    const el = document.getElementById('search-results');
+    if (!el) return;
+
+    if (fileUsageState) { renderFileUsageResults(el); return; }
+
+    if (!searchState.hits.length) {
+      el.innerHTML = searchState.running || !searchState.text.trim()
+        ? ''
+        : '<div class="search-empty">No matches.</div>';
+      return;
+    }
+
+    el.innerHTML = searchState.hits.map((hit, idx) => {
+      const title = searchState.titles[hit.sessionId];
+      const agentBadge = hit.agentId ? '<span class="search-agent">&#10557; agent</span>' : '';
+      const branch = hit.gitBranch ? `<span class="search-branch">${esc(hit.gitBranch)}</span>` : '';
+      const meta = sessionMeta[metaKey(hit.sessionId, hit.agentId)];
+      const tags = (meta?.tags || []).map((t) => `<span class="search-tag">${esc(t)}</span>`).join('');
+      return `
+      <div class="search-hit" data-idx="${idx}">
+        <div class="search-hit-head">
+          <span class="search-project">${esc(hit.projectPath.split('/').pop() || hit.projectPath)}</span>
+          ${branch}
+          <span class="search-scope-badge">${esc(SCOPE_LABELS[hit.scope] || hit.scope)}</span>
+          ${agentBadge}${tags}
+          <span class="search-time">${esc(timeAgo(hit.timestamp))}</span>
+        </div>
+        ${title ? `<div class="search-hit-title">${esc(title)}</div>` : ''}
+        <div class="search-hit-snippet">${highlightSnippet(hit.snippet, hit.matchStart, hit.matchLength)}</div>
+        <div class="search-hit-actions">
+          <button class="search-action" data-action="open" data-idx="${idx}">Open</button>
+          <button class="search-action" data-action="resume" data-idx="${idx}">Resume</button>
+          <button class="search-action" data-action="export" data-idx="${idx}">Export</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    el.querySelectorAll('.search-action').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const hit = searchState.hits[Number(btn.dataset.idx)];
+        if (!hit) return;
+        if (btn.dataset.action === 'open') openHit(hit);
+        else if (btn.dataset.action === 'resume') vscode.postMessage({ command: 'openInClaudeCode', sessionId: hit.sessionId });
+        else if (btn.dataset.action === 'export') vscode.postMessage({ command: 'exportChat', projectKey: hit.projectKey, sessionId: hit.sessionId });
+      });
+    });
+
+    el.querySelectorAll('.search-hit').forEach((row) => {
+      row.addEventListener('click', () => {
+        const hit = searchState.hits[Number(row.dataset.idx)];
+        if (hit) openHit(hit);
+      });
+    });
+  }
+
+  function renderFileUsageResults(el) {
+    const sessions = fileUsageState.sessions;
+    const toggle = `
+      <div class="search-usage-toggle">
+        <button class="search-toggle${fileUsageHeuristic ? ' selected' : ''}" id="usage-heuristic"
+                title="Also match paths mentioned in Bash commands (lower confidence)">Include Bash mentions</button>
+      </div>`;
+
+    const bindToggle = () => {
+      const btn = el.querySelector('#usage-heuristic');
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        fileUsageHeuristic = !fileUsageHeuristic;
+        searchState.running = true;
+        vscode.postMessage({
+          command: 'findFileUsage',
+          path: fileUsageState.path,
+          includeHeuristic: fileUsageHeuristic,
+        });
+        renderSearchStatus();
+      });
+    };
+
+    if (fileUsageState.error) {
+      el.innerHTML = toggle + `<div class="search-error">${esc(fileUsageState.error)}</div>`;
+      bindToggle();
+      return;
+    }
+    if (!sessions.length) {
+      el.innerHTML = toggle + `<div class="search-empty">No session has touched ${esc(fileUsageState.path)}.</div>`;
+      bindToggle();
+      return;
+    }
+
+    el.innerHTML = toggle + sessions.map((entry, idx) => `
+      <div class="search-hit" data-usage-idx="${idx}">
+        <div class="search-hit-head">
+          <span class="search-project">${esc(entry.projectPath.split('/').pop() || entry.projectPath)}</span>
+          ${entry.gitBranch ? `<span class="search-branch">${esc(entry.gitBranch)}</span>` : ''}
+          <span class="search-tier search-tier-${esc(entry.tier)}">${esc(entry.tier)}</span>
+          ${entry.agentId ? '<span class="search-agent">&#10557; agent</span>' : ''}
+          <span class="search-time">${esc(timeAgo(entry.timestamp))}</span>
+        </div>
+        <div class="search-hit-snippet">${entry.occurrences} reference${entry.occurrences === 1 ? '' : 's'}</div>
+      </div>`).join('');
+
+    bindToggle();
+    el.querySelectorAll('.search-hit').forEach((row) => {
+      row.addEventListener('click', () => {
+        const entry = sessions[Number(row.dataset.usageIdx)];
+        if (entry) openHit(entry);
+      });
+    });
+  }
+
+  function openHit(hit) {
+    activeTab = 'sessions';
+    const tabBar = document.getElementById('tab-bar');
+    if (tabBar) tabBar.querySelectorAll('.tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === 'sessions'));
+    hideStats();
+    selectedSessionId = hit.sessionId;
+    selectedAgentId = hit.agentId ?? null;
+    applySelectedState();
+    vscode.postMessage({
+      command: 'loadConversation',
+      projectKey: hit.projectKey,
+      sessionId: hit.sessionId,
+      agentId: hit.agentId,
+      scrollToUuid: hit.uuid,
+    });
+  }
+
+  // ── Saved searches ─────────────────────────────────────────────────────────
+  function renderSavedSearchChips() {
+    const bar = document.getElementById('filter-bar');
+    if (!bar) return;
+    bar.querySelectorAll('.saved-search-chip').forEach((c) => c.remove());
+
+    for (const saved of savedSearches) {
+      const chip = document.createElement('button');
+      chip.className = 'filter-chip saved-search-chip';
+      chip.title = `Saved search: ${saved.query.text}`;
+      chip.textContent = saved.name;
+
+      const remove = document.createElement('span');
+      remove.className = 'saved-search-remove';
+      remove.textContent = '×';
+      remove.addEventListener('click', (e) => {
+        e.stopPropagation();
+        vscode.postMessage({ command: 'deleteSavedSearch', id: saved.id });
+      });
+      chip.appendChild(remove);
+
+      chip.addEventListener('click', () => applySavedSearch(saved));
+      bar.appendChild(chip);
+    }
+  }
+
+  function applySavedSearch(saved) {
+    const q = saved.query || {};
+    searchState.text = q.text || '';
+    searchState.isRegex = !!q.isRegex;
+    searchState.caseSensitive = !!q.caseSensitive;
+    searchState.scopes = (q.scopes || ['prompts', 'assistant', 'note']).slice();
+    searchState.projectKey = (q.projectKeys || [])[0] || '';
+    searchState.branch = (q.branches || [])[0] || '';
+    searchState.tag = (q.tags || [])[0] || '';
+    searchState.after = q.after ? q.after.slice(0, 10) : '';
+    searchState.before = q.before ? q.before.slice(0, 10) : '';
+
+    activeTab = 'search';
+    const tabBar = document.getElementById('tab-bar');
+    if (tabBar) tabBar.querySelectorAll('.tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === 'search'));
+    showSearch();
+    runSearchNow();
+  }
+
+  // ── Timeline ───────────────────────────────────────────────────────────────
+  function showTimeline() {
+    hideOtherPanels();
+    const container = document.getElementById('conversation-container');
+    if (!container) return;
+    container.innerHTML = '<div class="search-empty">Building timeline…</div>';
+    container.style.display = '';
+    timelineDays = null;
+    vscode.postMessage({ command: 'getTimeline' });
+  }
+
+  function renderTimelineView() {
+    const container = document.getElementById('conversation-container');
+    if (!container) return;
+
+    if (timelineError) {
+      container.innerHTML = `<div class="search-error">${esc(timelineError)}</div>`;
+      return;
+    }
+    if (!timelineDays || !timelineDays.length) {
+      container.innerHTML = '<div class="search-empty">No sessions found.</div>';
+      return;
+    }
+
+    const flat = [];
+    container.innerHTML = `<div class="timeline-view">${timelineDays.map((day) => {
+      const rows = day.entries.map((entry) => {
+        const idx = flat.push(entry) - 1;
+        const meta = sessionMeta[metaKey(entry.sessionId, entry.agentId)];
+        const tags = (meta?.tags || []).map((t) => `<span class="search-tag">${esc(t)}</span>`).join('');
+        return `
+        <div class="timeline-entry" data-idx="${idx}">
+          <span class="search-project">${esc(entry.projectPath.split('/').pop() || entry.projectPath)}</span>
+          ${entry.gitBranch ? `<span class="search-branch">${esc(entry.gitBranch)}</span>` : ''}
+          <span class="timeline-title">${esc(entry.title || entry.sessionId.slice(0, 8))}</span>
+          ${tags}
+          <span class="search-time">${entry.messageCount} msg</span>
+        </div>`;
+      }).join('');
+      const label = new Date(day.date + 'T12:00:00').toLocaleDateString(undefined, {
+        weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+      });
+      return `<div class="timeline-day"><div class="timeline-date">${esc(label)}</div>${rows}</div>`;
+    }).join('')}</div>`;
+
+    container.querySelectorAll('.timeline-entry').forEach((row) => {
+      row.addEventListener('click', () => {
+        const entry = flat[Number(row.dataset.idx)];
+        if (entry) openHit(entry);
+      });
+    });
+  }
+
+  // ── Session notes and tags ─────────────────────────────────────────────────
+  function renderNotesPanel() {
+    const panel = document.getElementById('notes-panel');
+    if (!panel || panel.style.display === 'none') return;
+    const meta = sessionMeta[metaKey(selectedSessionId, selectedAgentId)] || {};
+    const note = panel.querySelector('#notes-text');
+    const tags = panel.querySelector('#notes-tags');
+    if (note && document.activeElement !== note) note.value = meta.note || '';
+    if (tags && document.activeElement !== tags) tags.value = (meta.tags || []).join(', ');
+  }
+
+  (function initNotes() {
+    const btn = document.getElementById('notes-btn');
+    if (!btn) return;
+
+    const panel = document.createElement('div');
+    panel.id = 'notes-panel';
+    panel.style.display = 'none';
+    panel.innerHTML = `
+      <textarea id="notes-text" class="notes-text" placeholder="Note for this session…"></textarea>
+      <input type="text" id="notes-tags" class="notes-tags" placeholder="tags, comma, separated">
+      <button class="search-toggle" id="notes-save">Save</button>`;
+    const header = document.getElementById('conversation-header');
+    if (header && header.parentNode) header.parentNode.insertBefore(panel, header.nextSibling);
+
+    btn.addEventListener('click', () => {
+      panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+      renderNotesPanel();
+    });
+
+    panel.querySelector('#notes-save').addEventListener('click', () => {
+      if (!selectedSessionId) return;
+      const tags = panel.querySelector('#notes-tags').value
+        .split(',').map((t) => t.trim()).filter(Boolean);
+      vscode.postMessage({
+        command: 'setSessionMeta',
+        sessionId: selectedSessionId,
+        agentId: selectedAgentId ?? undefined,
+        note: panel.querySelector('#notes-text').value,
+        tags,
+      });
+      panel.style.display = 'none';
+    });
+  })();
+
 })();
