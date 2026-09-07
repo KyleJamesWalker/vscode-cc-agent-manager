@@ -19,6 +19,7 @@ interface ContentItem {
 
 interface RawMessage {
   type: string;
+  uuid?: string;
   sessionId?: string;
   cwd?: string;
   gitBranch?: string;
@@ -61,7 +62,7 @@ function parseJsonlFile(filePath: string): RawMessage[] {
   }
 }
 
-function isCommandMessage(text: string): boolean {
+export function isCommandMessage(text: string): boolean {
   return (
     text.includes('<command-name>') ||
     text.includes('<command-message>') ||
@@ -617,6 +618,7 @@ export function readConversation(
       role: msg.type === 'user' ? 'user' : 'assistant',
       blocks,
       timestamp: msg.timestamp,
+      uuid: msg.uuid,
     });
   }
 

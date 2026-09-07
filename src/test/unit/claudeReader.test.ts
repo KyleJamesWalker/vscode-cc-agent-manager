@@ -89,6 +89,20 @@ describe('readConversation', () => {
     expect(result[0].blocks).toEqual([{ type: 'text', content: 'Hello world' }]);
   });
 
+  test('carries the message uuid through so a search hit can scroll to it', () => {
+    jest.mocked(fs.readFileSync).mockReturnValue(
+      '{"type":"user","uuid":"abc-123","message":{"content":"Hello world"}}\n'
+    );
+    expect(readConversation('proj', 'sess')[0].uuid).toBe('abc-123');
+  });
+
+  test('leaves uuid undefined when the line has none', () => {
+    jest.mocked(fs.readFileSync).mockReturnValue(
+      '{"type":"user","message":{"content":"Hello world"}}\n'
+    );
+    expect(readConversation('proj', 'sess')[0].uuid).toBeUndefined();
+  });
+
   test('parses array content text item as a text block', () => {
     jest.mocked(fs.readFileSync).mockReturnValue(
       '{"type":"assistant","message":{"content":[{"type":"text","text":"Hi there"}]}}\n'
