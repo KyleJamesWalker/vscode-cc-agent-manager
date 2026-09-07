@@ -8,58 +8,13 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { WEBVIEW_BODY } from './webviewFixture';
 
 const MAIN_JS = fs.readFileSync(
   path.resolve(__dirname, '../../../media/main.js'),
   'utf8'
 );
 
-// Matches the HTML produced by agentManagerPanel._getHtml() (minus nonce/URIs).
-const WEBVIEW_BODY = `
-  <div id="app">
-    <div id="icon-rail"></div>
-    <div id="sidebar">
-      <span id="last-updated"></span>
-      <button id="refresh-btn"></button>
-      <div class="settings-wrap">
-        <button id="settings-btn"></button>
-        <div id="settings-panel">
-          <input type="checkbox" id="sound-enabled" />
-          <select id="sound-repeat"><option value="0">Never</option></select>
-          <button id="test-sound-btn"></button>
-          <input type="radio" name="export-dest" value="dialog" />
-          <input type="radio" name="export-dest" value="default" />
-          <input type="radio" name="export-dest" value="cwd" />
-          <input type="radio" name="export-tool" value="compact" />
-          <input type="radio" name="export-tool" value="expanded" />
-          <input type="radio" name="export-tool" value="omit" />
-        </div>
-      </div>
-      <input type="text" id="search" />
-      <button id="clear-search"></button>
-      <div id="filter-bar">
-        <button class="filter-chip selected" data-filter="all">All</button>
-        <button class="filter-chip" data-filter="active">Active</button>
-        <button class="filter-chip" data-filter="waiting">Waiting</button>
-        <button class="filter-chip" data-filter="pinned">Pinned</button>
-      </div>
-      <div id="projects-container"></div>
-    </div>
-    <div id="main-panel">
-      <span id="conv-breadcrumb"></span>
-      <span id="live-indicator"></span>
-      <button id="focus-btn" style="display:none"></button>
-      <button id="send-btn" style="display:none"></button>
-      <button id="export-btn" style="display:none"></button>
-      <div id="conversation-container" tabindex="0"></div>
-      <div id="send-bar">
-        <textarea id="send-input"></textarea>
-        <button id="send-submit-btn" disabled></button>
-        <div id="send-error"></div>
-      </div>
-    </div>
-  </div>
-`;
 
 const DEFAULT_SETTINGS = {
   soundEnabled: false,
