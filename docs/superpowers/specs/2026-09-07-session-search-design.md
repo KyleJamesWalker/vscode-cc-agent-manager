@@ -52,6 +52,8 @@ Measured on the author's machine against real data, 2026-09-07:
 Confirmed during review, 2026-09-07:
 
 1. **Default search scope** — user prompts + assistant text. Thinking and tool I/O are opt-in toggles. Tool output is the bulk of the 479 MB and is mostly file dumps and command output, so including it by default would drown the signal.
+
+   *Implementation deviation:* a sixth scope, `note`, was added and is on by default alongside prompts and assistant. Phase 4 makes notes a searchable field, and a hand-written label is useless for finding a session later if search ignores it unless you first opt in. The rationale for the restricted default — tool output drowning the signal — does not apply, since notes total a few bytes per session.
 2. **Timeline placement** — its own tab, not a mode inside Search.
 3. **Notes/tags storage** — `globalState`. A syncable JSON file may be added later behind a setting; it is not in this scope.
 4. **Phasing** — all five phases ship together in one PR. The phase table is a build order, not a release boundary.
@@ -293,51 +295,51 @@ Per `CLAUDE.md`, every change starts with a failing test.
 | **2** | File reverse lookup + context-menu command | `fileUsageIndex.ts`, `package.json`, `extension.ts`, `main.js` |
 | **3** | Saved searches | `agentManagerPanel.ts`, `main.js` |
 | **4** | Notes & tags | `types.ts`, `agentManagerPanel.ts`, `main.js` |
-| **5** | Timeline | `main.js`, `sessionScanner.ts` |
+| **5** | Timeline | `sessionTimeline.ts`, `main.js` |
 
 All five phases ship in one PR. The table is a build order — each phase is independently testable and should be a separate commit — not a release boundary.
 
 ## Acceptance Criteria
 
 ### Phase 1 — Cross-session search
-- [ ] A Search tab exists, reachable by click and by `5`
-- [ ] Typing a query returns hits from every session on disk, including sessions older than 30 days
-- [ ] Hits from subagent files are found, including nested `workflows/wf_*/agent-*.jsonl`
-- [ ] Results stream in during the scan; the counter shows files scanned and elapsed time
-- [ ] A new query cancels the in-flight scan; stale batches never render
-- [ ] The UI stays responsive during a full-corpus scan
-- [ ] Scope toggles for prompts / assistant / thinking / tool I/O work independently; default is prompts + assistant
-- [ ] Project, branch, and date filters narrow results
-- [ ] Case-sensitivity and regex toggles work; an invalid regex shows an inline error rather than throwing
-- [ ] Matches are highlighted, and a snippet containing HTML renders escaped
-- [ ] Clicking a result opens that conversation scrolled to the matching message
-- [ ] Resume and Export work from a result
-- [ ] A full-corpus search over ~479 MB completes in under 3 s
+- [x] A Search tab exists, reachable by click and by `5`
+- [x] Typing a query returns hits from every session on disk, including sessions older than 30 days
+- [x] Hits from subagent files are found, including nested `workflows/wf_*/agent-*.jsonl`
+- [x] Results stream in during the scan; the counter shows files scanned and elapsed time
+- [x] A new query cancels the in-flight scan; stale batches never render
+- [x] The UI stays responsive during a full-corpus scan
+- [x] Scope toggles for prompts / assistant / thinking / tool I/O work independently; default is prompts + assistant
+- [x] Project, branch, and date filters narrow results
+- [x] Case-sensitivity and regex toggles work; an invalid regex shows an inline error rather than throwing
+- [x] Matches are highlighted, and a snippet containing HTML renders escaped
+- [x] Clicking a result opens that conversation scrolled to the matching message
+- [x] Resume and Export work from a result
+- [x] A full-corpus search over ~479 MB completes in under 3 s
 
 ### Phase 2 — File reverse lookup
-- [ ] Right-clicking a file in the explorer or editor offers "Show Claude sessions that touched this"
-- [ ] Results are grouped by session and tiered as modified / read / mentioned
-- [ ] `file-history-delta` and `file-history-snapshot` records are treated as authoritative for modifications
-- [ ] The `Bash` heuristic tier can be toggled off
-- [ ] A file with no history reports that clearly rather than showing an empty pane
+- [x] Right-clicking a file in the explorer or editor offers "Show Claude sessions that touched this"
+- [x] Results are grouped by session and tiered as modified / read / mentioned
+- [x] `file-history-delta` and `file-history-snapshot` records are treated as authoritative for modifications
+- [x] The `Bash` heuristic tier can be toggled off
+- [x] A file with no history reports that clearly rather than showing an empty pane
 
 ### Phase 3 — Saved searches
-- [ ] A query can be saved with a name and appears as a sidebar chip
-- [ ] Clicking a saved chip reopens the Search tab with the query applied
-- [ ] Saved searches persist across window reloads and can be deleted
+- [x] A query can be saved with a name and appears as a sidebar chip
+- [x] Clicking a saved chip reopens the Search tab with the query applied
+- [x] Saved searches persist across window reloads and can be deleted
 
 ### Phase 4 — Notes & tags
-- [ ] A note and tags can be attached to a session and persist across reloads
-- [ ] Tags render on sidebar rows and are filterable
-- [ ] Notes and tags are matched by search
-- [ ] Nothing is ever written under `~/.claude`
+- [x] A note and tags can be attached to a session and persist across reloads
+- [x] Tags render on sidebar rows and are filterable
+- [x] Notes and tags are matched by search
+- [x] Nothing is ever written under `~/.claude`
 
 ### Phase 5 — Timeline
-- [ ] A Timeline tab exists, reachable by click and by `6`
-- [ ] A day-by-day view lists sessions grouped by date across all projects
-- [ ] Each entry shows project, branch, and session title
-- [ ] Clicking an entry opens that conversation
-- [ ] The help overlay lists the correct tab numbers, including the two new tabs
+- [x] A Timeline tab exists, reachable by click and by `6`
+- [x] A day-by-day view lists sessions grouped by date across all projects
+- [x] Each entry shows project, branch, and session title
+- [x] Clicking an entry opens that conversation
+- [x] The help overlay lists the correct tab numbers, including the two new tabs
 
 ## Out of Scope
 
