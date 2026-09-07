@@ -3,7 +3,19 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { readClaudeProjects, readConversation } from './claudeReader';
-import { ManagerSettings, ClaudeProject, ClaudeSession } from './types';
+import {
+  ManagerSettings,
+  ClaudeProject,
+  ClaudeSession,
+  SavedSearch,
+  SearchQuery,
+  SearchHit,
+  SessionMeta,
+} from './types';
+import { listScanTargets } from './sessionScanner';
+import { compileMatcher, runSearch } from './sessionSearch';
+import { findFileUsage } from './fileUsageIndex';
+import { buildTimeline } from './sessionTimeline';
 import { exportConversation, expandTemplate } from './exporter';
 import { TerminalManager } from './terminalManager';
 import { getHooksHealth } from './hookHealth';
@@ -36,6 +48,7 @@ export class AgentManagerPanel {
   private _currentCwd: string | undefined;
   private _currentSessionId: string | undefined;
   private _terminalManager: TerminalManager;
+  private _searchAbort: AbortController | undefined;
 
   public static createOrShow(context: vscode.ExtensionContext): void {
     const column =
@@ -59,6 +72,16 @@ export class AgentManagerPanel {
     );
 
     AgentManagerPanel.currentPanel = new AgentManagerPanel(panel, context);
+  }
+
+  /** Opens the panel on the Search tab, seeded with a reverse lookup for `filePath`. */
+  public static showFileUsage(context: vscode.ExtensionContext, filePath: string): void {
+    AgentManagerPanel.createOrShow(context);
+    const panel = AgentManagerPanel.currentPanel;
+    if (!panel) return;
+
+    panel._panel.webview.postMessage({ command: 'startFileUsage', path: filePath });
+    panel._handleFileUsage(filePath, false);
   }
 
   private constructor(
@@ -138,6 +161,7 @@ export class AgentManagerPanel {
                 sessionId: message.sessionId,
                 agentId: message.agentId,
                 cwd: this._currentCwd,
+                scrollToUuid: message.scrollToUuid,
               });
               this._setupFileWatcher(message.projectKey, message.sessionId, message.agentId);
             }
@@ -192,6 +216,31 @@ export class AgentManagerPanel {
             if (message.sessionId) {
               void this._openInClaudeCode(message.sessionId);
             }
+            break;
+          case 'search':
+            this._handleSearch(message.query, message.requestId);
+            break;
+          case 'cancelSearch':
+            this._searchAbort?.abort();
+            break;
+          case 'findFileUsage':
+            this._handleFileUsage(message.path, !!message.includeHeuristic);
+            break;
+          case 'saveSearch':
+            if (message.name && message.query) {
+              this._saveSearch(message.name, message.query);
+            }
+            break;
+          case 'deleteSavedSearch':
+            if (message.id) { this._deleteSavedSearch(message.id); }
+            break;
+          case 'setSessionMeta':
+            if (message.sessionId) {
+              this._setSessionMeta(message.sessionId, message.agentId, message.note, message.tags);
+            }
+            break;
+          case 'getTimeline':
+            this._handleTimeline();
             break;
           case 'getHooksHealth':
             void (async () => {
@@ -319,7 +368,215 @@ export class AgentManagerPanel {
     this._projects = projects;
     const pinnedKeys = this._getPinnedKeys();
     const settings = this._getSettings();
-    this._panel.webview.postMessage({ command: 'update', projects, pinnedKeys, settings });
+    this._panel.webview.postMessage({
+      command: 'update',
+      projects,
+      pinnedKeys,
+      settings,
+      savedSearches: this._getSavedSearches(),
+      sessionMeta: this._getSessionMeta(),
+    });
+  }
+
+  private _getSavedSearches(): SavedSearch[] {
+    return this._context.globalState.get<SavedSearch[]>('savedSearches', []);
+  }
+
+  private _sendSavedSearches(items: SavedSearch[]): void {
+    void this._context.globalState.update('savedSearches', items);
+    this._panel.webview.postMessage({ command: 'savedSearches', items });
+  }
+
+  private _saveSearch(name: string, query: SearchQuery): void {
+    const items = this._getSavedSearches().filter((s) => s.name !== name);
+    items.push({ id: `${Date.now()}-${items.length}`, name, query });
+    this._sendSavedSearches(items);
+  }
+
+  private _deleteSavedSearch(id: string): void {
+    this._sendSavedSearches(this._getSavedSearches().filter((s) => s.id !== id));
+  }
+
+  private _getSessionMeta(): Record<string, SessionMeta> {
+    return this._context.globalState.get<Record<string, SessionMeta>>('sessionMeta', {});
+  }
+
+  private _setSessionMeta(
+    sessionId: string,
+    agentId: string | undefined,
+    note: string | undefined,
+    tags: string[] | undefined
+  ): void {
+    const items = { ...this._getSessionMeta() };
+    const key = agentId ? `${sessionId}:${agentId}` : sessionId;
+    const entry: SessionMeta = { ...items[key] };
+
+    if (note !== undefined) { entry.note = note; }
+    if (tags !== undefined) { entry.tags = tags; }
+
+    if (!entry.note && !entry.tags?.length) {
+      delete items[key];
+    } else {
+      items[key] = entry;
+    }
+
+    void this._context.globalState.update('sessionMeta', items);
+    this._panel.webview.postMessage({ command: 'sessionMeta', items });
+  }
+
+  private _handleSearch(query: SearchQuery, requestId: number): void {
+    this._searchAbort?.abort();
+    const controller = new AbortController();
+    this._searchAbort = controller;
+
+    void (async () => {
+      try {
+        const noteHits = this._matchNotes(query);
+        if (noteHits.length) {
+          this._panel.webview.postMessage({
+            command: 'searchProgress',
+            requestId,
+            hits: noteHits,
+            filesScanned: 0,
+            filesTotal: 0,
+          });
+        }
+
+        const targets = await listScanTargets();
+        const summary = await runSearch(
+          this._matchTags(query),
+          targets,
+          (hits, filesScanned, filesTotal) => {
+            this._panel.webview.postMessage({
+              command: 'searchProgress',
+              requestId,
+              hits,
+              filesScanned,
+              filesTotal,
+            });
+          },
+          controller.signal
+        );
+        this._panel.webview.postMessage({
+          command: 'searchDone',
+          requestId,
+          totalHits: summary.totalHits,
+          durationMs: summary.durationMs,
+          filesScanned: summary.filesScanned,
+          titles: summary.titles,
+          truncated: summary.aborted,
+        });
+      } catch (e: unknown) {
+        this._panel.webview.postMessage({
+          command: 'searchDone',
+          requestId,
+          totalHits: 0,
+          durationMs: 0,
+          filesScanned: 0,
+          titles: {},
+          truncated: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    })();
+  }
+
+  /**
+   * Notes are stored in globalState rather than in the transcripts, so the disk
+   * scan cannot see them. Matching them here keeps a hand-written label — the
+   * most reliable way to find a session later — searchable alongside content.
+   */
+  private _matchNotes(query: SearchQuery): SearchHit[] {
+    if (!query.scopes.includes('note') || !query.text.trim()) return [];
+
+    let matcher: RegExp;
+    try {
+      matcher = compileMatcher(query);
+    } catch {
+      return [];
+    }
+
+    const hits: SearchHit[] = [];
+    for (const [key, entry] of Object.entries(this._getSessionMeta())) {
+      const haystack = [entry.note ?? '', ...(entry.tags ?? [])].join(' ').trim();
+      if (!haystack) continue;
+
+      const match = matcher.exec(haystack);
+      if (!match) continue;
+
+      const [sessionId, agentId] = key.split(':');
+      const project = this._projects.find((p) =>
+        p.sessions.some((s) => s.sessionId === sessionId)
+      );
+
+      hits.push({
+        projectKey: project?.key ?? '',
+        projectPath: project?.path ?? '',
+        sessionId,
+        agentId,
+        uuid: '',
+        role: 'user',
+        scope: 'note',
+        snippet: haystack,
+        matchStart: match.index,
+        matchLength: match[0].length,
+      });
+    }
+
+    return hits;
+  }
+
+  /** Tag filtering happens here because tags live in globalState, not on disk. */
+  private _matchTags(query: SearchQuery): SearchQuery {
+    if (!query.tags?.length) return query;
+
+    const meta = this._getSessionMeta();
+    const wanted = new Set(query.tags);
+    const keys = new Set<string>();
+    for (const [key, entry] of Object.entries(meta)) {
+      if (entry.tags?.some((t) => wanted.has(t))) { keys.add(key.split(':')[0]); }
+    }
+
+    return { ...query, tags: undefined, sessionIds: Array.from(keys) };
+  }
+
+  private _handleFileUsage(filePath: string, includeHeuristic: boolean): void {
+    this._searchAbort?.abort();
+    const controller = new AbortController();
+    this._searchAbort = controller;
+
+    void (async () => {
+      try {
+        const targets = await listScanTargets();
+        const sessions = await findFileUsage(filePath, targets, controller.signal, {
+          includeHeuristic,
+        });
+        this._panel.webview.postMessage({ command: 'fileUsage', path: filePath, sessions });
+      } catch (e: unknown) {
+        this._panel.webview.postMessage({
+          command: 'fileUsage',
+          path: filePath,
+          sessions: [],
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    })();
+  }
+
+  private _handleTimeline(): void {
+    void (async () => {
+      try {
+        const targets = await listScanTargets();
+        const days = await buildTimeline(targets, new AbortController().signal);
+        this._panel.webview.postMessage({ command: 'timeline', days });
+      } catch (e: unknown) {
+        this._panel.webview.postMessage({
+          command: 'timeline',
+          days: [],
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    })();
   }
 
   private _setupFileWatcher(projectKey: string, sessionId: string, agentId?: string): void {
@@ -619,6 +876,8 @@ export class AgentManagerPanel {
         <button class="tab-btn" data-tab="stats">Stats</button>
         <button class="tab-btn" data-tab="health">Health</button>
         <button class="tab-btn" data-tab="about">About</button>
+        <button class="tab-btn" data-tab="search">Search</button>
+        <button class="tab-btn" data-tab="timeline">Timeline</button>
       </div>
       <div id="conversation-header">
         <span id="conv-breadcrumb">Select a session to view its conversation</span>
@@ -628,6 +887,7 @@ export class AgentManagerPanel {
         </span>
         <button class="action-btn" id="focus-btn" title="Focus terminal" style="display:none">&#10548; Focus</button>
         <button class="action-btn" id="send-btn" title="Send message" style="display:none">&#9993; Send</button>
+        <button class="action-btn" id="notes-btn" title="Notes and tags" style="display:none">&#9998; Notes</button>
         <button class="export-btn" id="export-btn" title="Export conversation">Export</button>
       </div>
       <div id="conversation-container" tabindex="0">

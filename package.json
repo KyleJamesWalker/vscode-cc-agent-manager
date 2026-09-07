@@ -32,6 +32,11 @@
         "command": "claudeAgentManager.openPanel",
         "title": "Claude: Open Agent Manager",
         "icon": "$(robot)"
+      },
+      {
+        "command": "claudeAgentManager.findSessionsForFile",
+        "title": "Claude: Show Sessions That Touched This File",
+        "icon": "$(search)"
       }
     ],
     "keybindings": [
@@ -45,6 +50,22 @@
       "commandPalette": [
         {
           "command": "claudeAgentManager.openPanel"
+        },
+        {
+          "command": "claudeAgentManager.findSessionsForFile"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "claudeAgentManager.findSessionsForFile",
+          "group": "navigation@99",
+          "when": "!explorerResourceIsFolder"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "claudeAgentManager.findSessionsForFile",
+          "group": "navigation@99"
         }
       ]
     }
